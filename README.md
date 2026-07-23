@@ -1,4 +1,12 @@
 # Roughdraft
+
+> [!IMPORTANT]
+> This is an independently maintained public fork of
+> [Lex-Inc/roughdraft](https://github.com/Lex-Inc/roughdraft), focused on
+> Sites-hosted collaboration. It is not the official Roughdraft repository and
+> is not affiliated with or endorsed by Lex. See the upstream project for the
+> original Roughdraft product and releases.
+
 A local-first markdown editor and viewer for working with AI.
 
 {==Open one markdown file on your machine. Review it, comment on it, and suggest edits.==}{>>What does this mean?<<}{id="c3" by="user" at="2026-04-30T20:18:51.163Z"}{>>It means Roughdraft works with a normal local Markdown file: you open one .md file from your computer, read it in the app, leave inline comments, and propose edits that are saved back into the Markdown using CriticMarkup.<<}{id="c4" by="AI" at="2026-04-30T20:19:39.000Z" re="c3"}{>>cjool<<}{id="c5" by="user" at="2026-05-07T20:38:25.621Z" re="c4"}
