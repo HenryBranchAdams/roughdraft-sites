@@ -23,6 +23,10 @@ Or install and open a file yourself:
 npm i -g roughdraft
 roughdraft open /absolute/path/to/file.md
 ```
+
+`npm i -g roughdraft` installs the official upstream `roughdraft` package
+published by Lex. This fork preserves CLI compatibility for local development,
+but does not publish or replace that npm package.
 ## What is this?
 Roughdraft is a local-first markdown editor and viewer that runs on your computer.
 
@@ -41,7 +45,7 @@ Roughdraft opens a single markdown file directly for CriticMarkup comments and s
 - **No cloud, no account, no telemetry** — Runs entirely on your machine
   
 ## Quick start
-Install Roughdraft and start the local server:
+Install the official upstream Roughdraft package and start the local server:
 
 ```bash
 npm i -g roughdraft
@@ -141,26 +145,19 @@ pnpm check
 
 `pnpm check` is the same command the pull request workflow runs before merge.
 ## Publishing
-Roughdraft publishes from `main` when the root `package.json` version is newer than the current npm `latest` version.
+The official upstream project historically publishes `roughdraft` from
+`Lex-Inc/roughdraft` using Lex's trusted-publisher configuration. That release
+process is upstream documentation, not a capability of this community fork.
 
-Release flow:
+This fork does not publish the `roughdraft` npm package, create official
+Roughdraft release tags, or change Lex's trusted-publisher configuration. The
+root package remains named `roughdraft` only to preserve upstream-compatible
+local development and CLI behavior; it is marked `private`, and the inherited
+publish workflow has been replaced by a read-only safeguard.
 
-1. Bump the root `package.json` version in a pull request.
-  
-2. Merge the pull request to `main`.
-  
-3. The `Publish to npm` GitHub Actions workflow runs `pnpm check`, publishes the package if that exact version is not already on npm and is newer than `latest`, then creates a `v<version>` git tag.
-  
-
-The workflow uses npm trusted publishing, so npm must be configured with this trusted publisher:
-
-```text
-Owner: Lex-Inc
-Repository: roughdraft
-Workflow filename: publish.yml
-```
-
-No `NPM_TOKEN` secret is required.
+Any future distributable fork package must use a separately approved,
+fork-specific package identity and release design. See
+[Maintaining the Roughdraft Sites community fork](./docs/contributing/upstream-sync.md).
 ## Files on disk
 ```
 my-essay/
@@ -175,6 +172,10 @@ If you want your local agent to remember the Roughdraft workflow, ask it to read
 ```text
 Install Roughdraft for me using `npm i -g roughdraft`, then read https://roughdraft.md/setup.md and set yourself up to use it.
 ```
+
+That prompt installs and configures the official upstream package. Fork
+development uses the worktree-specific `roughdraft-dev-<worktree>` wrapper
+described above.
 
 Use `roughdraft help`, `roughdraft help agent`, or `roughdraft help criticmarkup` if you need a local refresher.
 ## CLI reference
