@@ -73,7 +73,7 @@ comments:
 
 The highlighted text is the visible anchor. Implementations SHOULD attach all immediately following comment blocks to the same anchor until another token interrupts the sequence.
 
-A standalone highlight is valid CriticMarkup. Roughdraft 0.1 reserves it as review syntax, but standalone highlights are not required to produce a review-thread item unless an implementation explicitly supports highlight-only annotations.
+A standalone highlight is valid CriticMarkup. Roughdraft 0.2 reserves it as review syntax, but standalone highlights are not required to produce a review-thread item unless an implementation explicitly supports highlight-only annotations.
 
 ## Suggestions
 
@@ -277,7 +277,7 @@ Example:
 ```json
 {
   "format": "roughdraft-flavored-markdown",
-  "version": "0.1",
+  "version": "0.2",
   "source": {
     "markdown": "Please revisit {==this sentence==}{>>Needs a source.<<}{#c1}.\\n\\n---\\ncomments:\\n  c1:\\n    by: user\\n    at: \"2026-04-28T12:00:00.000Z\"\\n"
   },
@@ -296,4 +296,4 @@ Example:
 }
 ```
 
-Conformance fixtures live in [`fixtures/`](./fixtures/). A parser that claims Roughdraft Flavored Markdown 0.1 support SHOULD pass those examples or document any intentional differences.
+Conformance fixtures live in [`fixtures/`](./fixtures/). A parser that claims Roughdraft Flavored Markdown 0.2 support SHOULD pass those examples or document any intentional differences.

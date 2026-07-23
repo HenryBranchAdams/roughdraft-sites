@@ -145,6 +145,13 @@ suggestions:
 | Code mode | Review rail absent | Open fenced fixture with `?editor=code` | `page-card-code`, `markdown-code-editor` | Confirms fenced CriticMarkup alone does not create review rail. |
 | Error/home fallback | Non-Markdown path | Open URL with `?path=/tmp/file.txt` | homepage error message | Copy: `Roughdraft now opens one .md file at a time.` |
 | Error/home fallback | Missing/unloadable path | Open URL with invalid markdown path through local backend | homepage error message | Captures load-error homepage variant. |
+| Sites-hosted | Canonical workspace | Open the fork-owned Sites app with an admitted synthetic test viewer | `hosted-shell`, `hosted-attribution` | Capture “Sites-hosted collaboration,” “Hosted record is canonical,” community-fork/upstream/MIT attribution, and the no-local-sync reminder. |
+| Sites-hosted | Separate-context update | Context A commits a D1 version while clean context B polls | `file-conflict-notice` | Use two independent browser contexts, not two pages sharing one context. |
+| Sites-hosted | Stale conflict | Contexts A and B edit version N; save A, then save B | `file-conflict-notice`, `file-conflict-action-reload`, `file-conflict-action-overwrite` | No N+2 should exist until the reviewer chooses a recovery action. |
+| Sites-hosted | Confirmed replace | Choose overwrite after a stale conflict | browser confirmation dialog | Copy must say the replaced version remains in history. |
+| Sites-hosted | Invalid RFM import | Import malformed review syntax | `hosted-toast` | The mutation remains rejected with structured RFM diagnostics. |
+| Sites-hosted | Access errors | Exercise missing identity, unauthorized identity, and unknown document | `hosted-error` | Capture 401, 403, and 404 variants without personal data. |
+| Sites-hosted | Collaboration activity | Open Activity after import, restore, confirmed replace, and completed review | `activity-panel` | Show attributable immutable history and the no-local-sync footer. |
 ## Playwright Capture Skeleton
 ```ts
 import { chromium, devices } from "playwright";
