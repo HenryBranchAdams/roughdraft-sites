@@ -3,7 +3,7 @@ export type SitesMigration = {
   statements: readonly string[];
 };
 
-export const SITES_SCHEMA_VERSION = 2;
+export const SITES_SCHEMA_VERSION = 4;
 
 export const sitesMigrations: readonly SitesMigration[] = [
   {
@@ -83,6 +83,61 @@ export const sitesMigrations: readonly SitesMigration[] = [
                THEN access_scope
              ELSE 'site-members'
            END`,
+    ],
+  },
+  {
+    id: "0003_virtual_paths_and_immutable_owners",
+    statements: [
+      "ALTER TABLE documents ADD COLUMN virtual_path TEXT",
+      "ALTER TABLE documents ADD COLUMN owner_email TEXT",
+      `UPDATE documents
+       SET virtual_path = CASE
+             WHEN id = 'roughdraft-skill' THEN 'roughdraft-SKILL.md'
+             ELSE slug || '.md'
+           END
+       WHERE virtual_path IS NULL OR trim(virtual_path) = ''`,
+      `UPDATE documents
+       SET owner_email = lower(trim(updated_by))
+       WHERE owner_email IS NULL OR trim(owner_email) = ''`,
+      "CREATE UNIQUE INDEX IF NOT EXISTS documents_virtual_path_unique ON documents (virtual_path)",
+      `CREATE TRIGGER IF NOT EXISTS documents_owner_email_immutable
+       BEFORE UPDATE OF owner_email ON documents
+       FOR EACH ROW
+       WHEN OLD.owner_email IS NOT NULL AND NEW.owner_email IS NOT OLD.owner_email
+       BEGIN
+         SELECT RAISE(ABORT, 'documents.owner_email is immutable');
+       END`,
+      `UPDATE documents
+       SET schema_version = 3
+      WHERE schema_version < 3`,
+    ],
+  },
+  {
+    id: "0004_case_insensitive_virtual_paths",
+    statements: [
+      `WITH ranked_paths AS (
+         SELECT id,
+                ROW_NUMBER() OVER (
+                  PARTITION BY lower(virtual_path)
+                  ORDER BY created_at, id
+                ) AS duplicate_rank
+         FROM documents
+       )
+       UPDATE documents
+       SET virtual_path = 'path-conflicts/' ||
+         lower(replace(id, '-', '_')) ||
+         CASE
+           WHEN lower(virtual_path) LIKE '%.markdown' THEN '.markdown'
+           ELSE '.md'
+         END
+       WHERE id IN (
+         SELECT id FROM ranked_paths WHERE duplicate_rank > 1
+       )`,
+      "DROP INDEX IF EXISTS documents_virtual_path_unique",
+      "CREATE UNIQUE INDEX IF NOT EXISTS documents_virtual_path_nocase_unique ON documents (virtual_path COLLATE NOCASE)",
+      `UPDATE documents
+       SET schema_version = 4
+       WHERE schema_version < 4`,
     ],
   },
 ];

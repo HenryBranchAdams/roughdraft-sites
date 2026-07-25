@@ -5,20 +5,26 @@ import {
   validateRoughdraftMarkdown,
 } from "../app/roughdraft-ui/rfm";
 import roughdraftSkill from "../content/roughdraft-skill.md?raw";
-import { applySitesMigrations } from "../db/migrations";
+import { applySitesMigrations, SITES_SCHEMA_VERSION } from "../db/migrations";
 import {
   type HostedDocumentPublicDto,
+  type HostedDocumentListItemPublicDto,
   type HostedViewerPublicDto,
   readHostedViewerIdentity,
   safeHostedDisplayName,
   toHostedDocumentPublicDto,
   toHostedViewerPublicDto,
 } from "./hosted-public-data";
+import {
+  InvalidVirtualPathError,
+  validateVirtualPath as validateHostedVirtualPath,
+} from "./virtual-path";
 
 export const CANONICAL_DOCUMENT_ID = "roughdraft-skill";
 export const CANONICAL_DOCUMENT_PATH = "roughdraft-SKILL.md";
 const MAX_MARKDOWN_BYTES = 1_000_000;
 const MAX_OVERALL_COMMENT_LENGTH = 4_000;
+const DOCUMENT_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 export type HostedViewer = {
   displayName: string;
@@ -51,6 +57,8 @@ type DocumentRow = {
   updated_by: string;
   schema_version: number;
   access_scope: DocumentAccessScope;
+  virtual_path: string;
+  owner_email: string;
 };
 
 export type HostedDocument = {
@@ -68,6 +76,7 @@ export type HostedDocument = {
   canonical: "hosted-record";
   schemaVersion: number;
   accessScope: DocumentAccessScope;
+  ownerEmail: string;
   capabilities: {
     sharedPersistence: true;
     optimisticConcurrency: true;
@@ -77,6 +86,7 @@ export type HostedDocument = {
 };
 
 export type { HostedDocumentPublicDto, HostedViewerPublicDto };
+export type { HostedDocumentListItemPublicDto };
 
 let schemaReady: Promise<void> | null = null;
 
@@ -145,8 +155,9 @@ export async function ensureCanonicalDocument(
       .prepare(`
         INSERT OR IGNORE INTO documents (
           id, slug, title, markdown, version, review_state,
-          created_at, updated_at, updated_by, schema_version, access_scope
-        ) VALUES (?, ?, ?, ?, 1, 'in_review', ?, ?, ?, 2, 'site-members')
+          created_at, updated_at, updated_by, schema_version, access_scope,
+          virtual_path, owner_email
+        ) VALUES (?, ?, ?, ?, 1, 'in_review', ?, ?, ?, ?, 'site-members', ?, ?)
       `)
       .bind(
         CANONICAL_DOCUMENT_ID,
@@ -155,6 +166,9 @@ export async function ensureCanonicalDocument(
         roughdraftSkill,
         now,
         now,
+        viewer.email,
+        SITES_SCHEMA_VERSION,
+        CANONICAL_DOCUMENT_PATH,
         viewer.email,
       ),
     database
@@ -173,10 +187,148 @@ export async function ensureCanonicalDocument(
   return readCanonicalDocument(database);
 }
 
+export function validateVirtualPath(value: unknown): string {
+  try {
+    return validateHostedVirtualPath(value);
+  } catch (error) {
+    if (error instanceof InvalidVirtualPathError) {
+      throw new HostedDocumentError(error.message, 400, error.code);
+    }
+    throw error;
+  }
+}
+
+export async function listHostedDocuments(
+  viewer: HostedViewer,
+): Promise<HostedDocumentListItemPublicDto[]> {
+  await ensureCanonicalDocument(viewer);
+  const database = await getDatabase();
+  const rows = await database
+    .prepare(`
+      SELECT d.id, d.virtual_path, d.version, d.review_state,
+             d.created_at, d.updated_at,
+             length(CAST(d.markdown AS BLOB)) AS size_bytes
+      FROM documents d
+      WHERE d.access_scope = 'site-members'
+         OR d.owner_email = ?
+         OR EXISTS (
+           SELECT 1
+           FROM document_members m
+           WHERE m.document_id = d.id AND m.member_email = ?
+         )
+      ORDER BY lower(d.virtual_path), d.id
+    `)
+    .bind(viewer.email, viewer.email)
+    .all<{
+      id: string;
+      virtual_path: string;
+      version: number;
+      review_state: string;
+      created_at: string;
+      updated_at: string;
+      size_bytes: number;
+    }>();
+
+  return rows.results.map((row) => ({
+    id: row.id,
+    path: row.virtual_path,
+    versionNumber: row.version,
+    reviewState: row.review_state,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    sizeBytes: row.size_bytes,
+  }));
+}
+
+export async function createHostedDocument(input: {
+  path: string;
+  content: string;
+  viewer: HostedViewer;
+  changeKind: "create" | "import";
+}): Promise<HostedDocument> {
+  const path = validateVirtualPath(input.path);
+  validateMarkdown(input.content);
+  const database = await getDatabase();
+  const existing = await database
+    .prepare("SELECT id FROM documents WHERE virtual_path = ? COLLATE NOCASE")
+    .bind(path)
+    .first<{ id: string }>();
+  if (existing) {
+    throw new HostedDocumentError(
+      "A hosted document already uses that virtual path.",
+      409,
+      "virtual_path_conflict",
+    );
+  }
+
+  const documentId = crypto.randomUUID();
+  const now = new Date().toISOString();
+  try {
+    await database.batch([
+      database
+        .prepare(`
+        INSERT INTO documents (
+          id, slug, title, markdown, version, review_state,
+          created_at, updated_at, updated_by, schema_version, access_scope,
+          virtual_path, owner_email
+        ) VALUES (?, ?, ?, ?, 1, 'in_review', ?, ?, ?, ?, 'site-members', ?, ?)
+      `)
+        .bind(
+          documentId,
+          documentId,
+          titleFromMarkdown(input.content, path),
+          input.content,
+          now,
+          now,
+          input.viewer.email,
+          SITES_SCHEMA_VERSION,
+          path,
+          input.viewer.email,
+        ),
+      database
+        .prepare(`
+        INSERT INTO document_versions (
+          document_id, version, markdown, author_email, author_name,
+          change_kind, base_version, source_sha256, created_at
+        ) VALUES (?, 1, ?, ?, ?, ?, 0, ?, ?)
+      `)
+        .bind(
+          documentId,
+          input.content,
+          input.viewer.email,
+          input.viewer.displayName,
+          input.changeKind,
+          await sha256(input.content),
+          now,
+        ),
+    ]);
+  } catch (error) {
+    if (isVirtualPathConstraintError(error)) {
+      throw new HostedDocumentError(
+        "A hosted document already uses that virtual path.",
+        409,
+        "virtual_path_conflict",
+      );
+    }
+    throw error;
+  }
+  return readDocument(documentId, database);
+}
+
+function isVirtualPathConstraintError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    /unique/i.test(message) &&
+    /(?:documents_virtual_path_nocase_unique|documents\.virtual_path)/i.test(
+      message,
+    )
+  );
+}
+
 export function requestedDocumentId(request: Request): string {
   const value =
     new URL(request.url).searchParams.get("document") ?? CANONICAL_DOCUMENT_ID;
-  if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(value)) {
+  if (!DOCUMENT_ID_PATTERN.test(value)) {
     throw new HostedDocumentError(
       "Hosted document was not found.",
       404,
@@ -231,7 +383,8 @@ async function readDocument(
   const row = await d1
     .prepare(`
       SELECT id, title, markdown, version, review_state, created_at,
-             updated_at, updated_by, schema_version, access_scope
+             updated_at, updated_by, schema_version, access_scope,
+             virtual_path, owner_email
       FROM documents
       WHERE id = ?
     `)
@@ -249,7 +402,8 @@ async function readDocument(
   return documentFromRow(row);
 }
 
-export async function saveCanonicalDocument(input: {
+export async function saveHostedDocument(input: {
+  documentId: string;
   content: string;
   expectedVersion: string;
   viewer: HostedViewer;
@@ -258,7 +412,7 @@ export async function saveCanonicalDocument(input: {
 }): Promise<HostedDocument | { conflict: HostedDocument }> {
   validateMarkdown(input.content);
   const database = await getDatabase();
-  const current = await readCanonicalDocument(database);
+  const current = await readDocument(input.documentId, database);
   const requestedVersion = requireVersion(input.expectedVersion);
   const confirmedReplace =
     input.changeKind === "confirmed-replace" && input.confirmedReplace === true;
@@ -285,7 +439,7 @@ export async function saveCanonicalDocument(input: {
         nextVersion,
         now,
         input.viewer.email,
-        CANONICAL_DOCUMENT_ID,
+        input.documentId,
         baseVersion,
       ),
     database
@@ -307,26 +461,27 @@ export async function saveCanonicalDocument(input: {
         replacedBaseVersion,
         await sha256(input.content),
         now,
-        CANONICAL_DOCUMENT_ID,
+        input.documentId,
         nextVersion,
         now,
       ),
   ]);
 
   if ((results[0].meta.changes ?? 0) !== 1) {
-    return { conflict: await readCanonicalDocument(database) };
+    return { conflict: await readDocument(input.documentId, database) };
   }
 
-  return readCanonicalDocument(database);
+  return readDocument(input.documentId, database);
 }
 
-export async function completeCanonicalReview(input: {
+export async function completeHostedReview(input: {
+  documentId: string;
   expectedVersion: string;
   overallComment?: string;
   viewer: HostedViewer;
 }): Promise<HostedDocument | { conflict: HostedDocument }> {
   const database = await getDatabase();
-  const current = await readCanonicalDocument(database);
+  const current = await readDocument(input.documentId, database);
   const expected = requireVersion(input.expectedVersion);
   if (expected !== current.versionNumber) {
     return { conflict: current };
@@ -368,7 +523,7 @@ export async function completeCanonicalReview(input: {
           resultingVersion,
           now,
           input.viewer.email,
-          CANONICAL_DOCUMENT_ID,
+          input.documentId,
           current.versionNumber,
         ),
       database
@@ -388,7 +543,7 @@ export async function completeCanonicalReview(input: {
           current.versionNumber,
           await sha256(content),
           now,
-          CANONICAL_DOCUMENT_ID,
+          input.documentId,
           resultingVersion,
           now,
         ),
@@ -401,12 +556,7 @@ export async function completeCanonicalReview(input: {
           SET review_state = 'reviewed', updated_at = ?, updated_by = ?
           WHERE id = ? AND version = ?
         `)
-        .bind(
-          now,
-          input.viewer.email,
-          CANONICAL_DOCUMENT_ID,
-          current.versionNumber,
-        ),
+        .bind(now, input.viewer.email, input.documentId, current.versionNumber),
     );
   }
   statements.push(
@@ -419,7 +569,7 @@ export async function completeCanonicalReview(input: {
       `)
       .bind(
         crypto.randomUUID(),
-        CANONICAL_DOCUMENT_ID,
+        input.documentId,
         resultingVersion,
         input.viewer.email,
         input.viewer.displayName,
@@ -430,13 +580,13 @@ export async function completeCanonicalReview(input: {
   );
   const results = await database.batch(statements);
   if ((results[0].meta.changes ?? 0) !== 1) {
-    return { conflict: await readCanonicalDocument(database) };
+    return { conflict: await readDocument(input.documentId, database) };
   }
 
-  return readCanonicalDocument(database);
+  return readDocument(input.documentId, database);
 }
 
-export async function listCanonicalActivity(): Promise<{
+export async function listHostedActivity(documentId: string): Promise<{
   versions: Array<{
     version: number;
     authorName: string;
@@ -461,7 +611,7 @@ export async function listCanonicalActivity(): Promise<{
       ORDER BY version DESC
       LIMIT 30
     `)
-    .bind(CANONICAL_DOCUMENT_ID)
+    .bind(documentId)
     .all<{
       version: number;
       author_name: string | null;
@@ -477,7 +627,7 @@ export async function listCanonicalActivity(): Promise<{
       ORDER BY created_at DESC
       LIMIT 30
     `)
-    .bind(CANONICAL_DOCUMENT_ID)
+    .bind(documentId)
     .all<{
       id: string;
       version: number;
@@ -505,7 +655,8 @@ export async function listCanonicalActivity(): Promise<{
   };
 }
 
-export async function restoreCanonicalVersion(input: {
+export async function restoreHostedVersion(input: {
+  documentId: string;
   version: number;
   expectedVersion: string;
   viewer: HostedViewer;
@@ -517,14 +668,15 @@ export async function restoreCanonicalVersion(input: {
       FROM document_versions
       WHERE document_id = ? AND version = ?
     `)
-    .bind(CANONICAL_DOCUMENT_ID, input.version)
+    .bind(input.documentId, input.version)
     .first<{ markdown: string }>();
 
   if (!row) {
     throw new Error(`Version ${input.version} was not found.`);
   }
 
-  return saveCanonicalDocument({
+  return saveHostedDocument({
+    documentId: input.documentId,
     content: row.markdown,
     expectedVersion: input.expectedVersion,
     viewer: input.viewer,
@@ -532,7 +684,10 @@ export async function restoreCanonicalVersion(input: {
   });
 }
 
-export async function findAsset(path: string): Promise<{
+export async function findAsset(
+  documentId: string,
+  path: string,
+): Promise<{
   objectKey: string;
   mimeType: string;
   filename: string;
@@ -544,7 +699,7 @@ export async function findAsset(path: string): Promise<{
       FROM assets
       WHERE document_id = ? AND markdown_path = ?
     `)
-    .bind(CANONICAL_DOCUMENT_ID, path)
+    .bind(documentId, path)
     .first<{
       object_key: string;
       mime_type: string;
@@ -561,6 +716,7 @@ export async function findAsset(path: string): Promise<{
 }
 
 export async function recordAsset(input: {
+  documentId: string;
   id: string;
   markdownPath: string;
   objectKey: string;
@@ -579,7 +735,7 @@ export async function recordAsset(input: {
     `)
     .bind(
       input.id,
-      CANONICAL_DOCUMENT_ID,
+      input.documentId,
       input.markdownPath,
       input.objectKey,
       input.filename,
@@ -602,11 +758,12 @@ function documentFromRow(row: DocumentRow): HostedDocument {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     updatedBy: row.updated_by,
-    path: CANONICAL_DOCUMENT_PATH,
+    path: row.virtual_path,
     mode: "sites-hosted",
     canonical: "hosted-record",
     schemaVersion: row.schema_version,
     accessScope: row.access_scope,
+    ownerEmail: row.owner_email,
     capabilities: {
       sharedPersistence: true,
       optimisticConcurrency: true,
@@ -638,9 +795,12 @@ function requireVersion(value: string): number {
   return version;
 }
 
-function titleFromMarkdown(markdown: string): string {
+function titleFromMarkdown(
+  markdown: string,
+  fallbackPath = CANONICAL_DOCUMENT_PATH,
+): string {
   const heading = markdown.match(/^#\s+(.+)$/m)?.[1]?.trim();
-  return heading || CANONICAL_DOCUMENT_PATH;
+  return heading || fallbackPath.split("/").at(-1) || CANONICAL_DOCUMENT_PATH;
 }
 
 function validateMarkdown(content: string): void {
@@ -670,7 +830,7 @@ async function isDocumentAccessAllowed(
   if (document.accessScope === "site-members") return true;
   if (
     document.accessScope === "owner-only" &&
-    document.updatedBy === viewer.email
+    document.ownerEmail === viewer.email
   ) {
     return true;
   }

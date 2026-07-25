@@ -19,11 +19,16 @@ export const documents = sqliteTable(
     createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
     updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
     updatedBy: text("updated_by").notNull(),
-    schemaVersion: integer("schema_version").notNull().default(2),
+    schemaVersion: integer("schema_version").notNull().default(4),
     accessScope: text("access_scope").notNull().default("site-members"),
+    virtualPath: text("virtual_path").notNull(),
+    ownerEmail: text("owner_email").notNull(),
   },
   (table) => [
     uniqueIndex("documents_slug_unique").on(table.slug),
+    uniqueIndex("documents_virtual_path_nocase_unique").on(
+      sql`${table.virtualPath} COLLATE NOCASE`,
+    ),
     index("documents_updated_at_idx").on(table.updatedAt),
   ],
 );

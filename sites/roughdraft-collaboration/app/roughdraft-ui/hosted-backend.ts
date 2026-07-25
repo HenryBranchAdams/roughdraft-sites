@@ -20,6 +20,16 @@ type HostedDocumentDto = {
   path: string;
 };
 
+export type HostedDocumentListItem = {
+  id: string;
+  path: string;
+  versionNumber: number;
+  reviewState: string;
+  createdAt: string;
+  updatedAt: string;
+  sizeBytes: number;
+};
+
 export type HostedPage = Page &
   Omit<HostedDocumentDto, "id" | "content" | "version"> & {
     version: string;
@@ -29,12 +39,10 @@ export type HostedViewer = {
   displayName: string;
 };
 
-const HOSTED_DOCUMENT_TITLE = "Roughdraft shared document";
-
 function hostedPage(document: HostedDocumentDto): HostedPage {
   return {
     ...document,
-    title: HOSTED_DOCUMENT_TITLE,
+    title: document.path.split("/").at(-1) ?? "Hosted document",
   };
 }
 
@@ -48,9 +56,57 @@ export class HostedBackend implements StorageBackend {
   };
   canManageProjects = false;
   private lastVersion: string | null = null;
+  readonly documentId: string;
+
+  constructor(documentId = "roughdraft-skill") {
+    this.documentId = documentId;
+  }
+
+  private url(path: string): string {
+    const params = new URLSearchParams({ document: this.documentId });
+    return `${path}?${params.toString()}`;
+  }
+
+  static async list(): Promise<{
+    documents: HostedDocumentListItem[];
+    viewer: HostedViewer;
+  }> {
+    const response = await fetch("/api/documents", { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(`Could not list hosted documents: ${response.status}`);
+    }
+    return (await response.json()) as {
+      documents: HostedDocumentListItem[];
+      viewer: HostedViewer;
+    };
+  }
+
+  static async create(input: {
+    path: string;
+    content: string;
+    operation: "create" | "import";
+  }): Promise<HostedPage> {
+    const response = await fetch("/api/documents", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    });
+    const payload = (await response.json()) as {
+      document?: HostedDocumentDto;
+      error?: string;
+    };
+    if (!response.ok || !payload.document) {
+      throw new Error(
+        payload.error || `Document creation failed: ${response.status}`,
+      );
+    }
+    return hostedPage(payload.document);
+  }
 
   async load(): Promise<{ document: HostedPage; viewer: HostedViewer }> {
-    const response = await fetch("/api/document", { cache: "no-store" });
+    const response = await fetch(this.url("/api/document"), {
+      cache: "no-store",
+    });
     if (!response.ok) {
       throw new Error(`Could not load hosted document: ${response.status}`);
     }
@@ -71,7 +127,7 @@ export class HostedBackend implements StorageBackend {
     content: string,
     expectedVersion?: string,
   ): Promise<HostedPage> {
-    const response = await fetch("/api/document", {
+    const response = await fetch(this.url("/api/document"), {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ content, expectedVersion }),
@@ -98,7 +154,7 @@ export class HostedBackend implements StorageBackend {
     content: string,
     expectedVersion?: string,
   ): Promise<HostedPage> {
-    const response = await fetch("/api/document", {
+    const response = await fetch(this.url("/api/document"), {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -126,7 +182,7 @@ export class HostedBackend implements StorageBackend {
     content: string,
     replacedBaseVersion: string,
   ): Promise<HostedPage> {
-    const response = await fetch("/api/document", {
+    const response = await fetch(this.url("/api/document"), {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -160,7 +216,7 @@ export class HostedBackend implements StorageBackend {
       if (stopped || polling) return;
       polling = true;
       try {
-        const response = await fetch("/api/document", {
+        const response = await fetch(this.url("/api/document"), {
           cache: "no-store",
           headers: { Accept: "application/json" },
         });
@@ -194,7 +250,7 @@ export class HostedBackend implements StorageBackend {
     _relativePath: string,
     options: CompleteReviewOptions = {},
   ): Promise<CompleteReviewResult> {
-    const response = await fetch("/api/review-events", {
+    const response = await fetch(this.url("/api/review-events"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -231,7 +287,10 @@ export class HostedBackend implements StorageBackend {
   async saveAsset(file: File): Promise<StoredAsset> {
     const body = new FormData();
     body.append("file", file);
-    const response = await fetch("/api/assets", { method: "POST", body });
+    const response = await fetch(this.url("/api/assets"), {
+      method: "POST",
+      body,
+    });
     const payload = (await response.json()) as StoredAsset & {
       error?: string;
     };
@@ -243,10 +302,14 @@ export class HostedBackend implements StorageBackend {
 
   resolveFileUrl(path: string): string | null {
     if (!path.startsWith("./.roughdraft-assets/")) return null;
-    return `/api/assets?path=${encodeURIComponent(path)}`;
+    const params = new URLSearchParams({
+      document: this.documentId,
+      path,
+    });
+    return `/api/assets?${params.toString()}`;
   }
 
   async openProject(_path: string): Promise<void> {
-    // The hosted workspace is intentionally bound to one canonical document.
+    // Hosted navigation is managed by the Sites shell, not filesystem paths.
   }
 }

@@ -1,7 +1,11 @@
 // @vitest-environment node
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
-import { applySitesMigrations, SITES_SCHEMA_VERSION } from "./migrations";
+import {
+  applySitesMigrations,
+  sitesMigrations,
+  SITES_SCHEMA_VERSION,
+} from "./migrations";
 
 class Prepared {
   constructor(
@@ -73,11 +77,16 @@ describe("Sites D1 migrations", () => {
       .prepare("PRAGMA table_info(documents)")
       .all() as Array<{ name: string }>;
 
-    expect(applied).toHaveLength(2);
+    expect(applied).toHaveLength(4);
     expect(columns.map((column) => column.name)).toEqual(
-      expect.arrayContaining(["schema_version", "access_scope"]),
+      expect.arrayContaining([
+        "schema_version",
+        "access_scope",
+        "virtual_path",
+        "owner_email",
+      ]),
     );
-    expect(SITES_SCHEMA_VERSION).toBe(2);
+    expect(SITES_SCHEMA_VERSION).toBe(4);
   });
 
   it("upgrades a v1 document without changing its Markdown or history", async () => {
@@ -121,7 +130,8 @@ describe("Sites D1 migrations", () => {
 
     const document = database
       .prepare(
-        `SELECT markdown, version, schema_version, access_scope
+        `SELECT markdown, version, schema_version, access_scope,
+                virtual_path, owner_email
          FROM documents WHERE id = 'roughdraft-skill'`,
       )
       .get() as {
@@ -129,6 +139,8 @@ describe("Sites D1 migrations", () => {
       version: number;
       schema_version: number;
       access_scope: string;
+      virtual_path: string;
+      owner_email: string;
     };
     const history = database
       .prepare(
@@ -140,9 +152,128 @@ describe("Sites D1 migrations", () => {
     expect(document).toEqual({
       markdown: "# Preserved",
       version: 1,
-      schema_version: 2,
+      schema_version: 4,
       access_scope: "site-members",
+      virtual_path: "roughdraft-SKILL.md",
+      owner_email: "owner@example.test",
     });
     expect(history).toEqual([{ markdown: "# Preserved" }]);
+
+    expect(() =>
+      database
+        ?.prepare(
+          `UPDATE documents
+           SET owner_email = 'other@example.test'
+           WHERE id = 'roughdraft-skill'`,
+        )
+        .run(),
+    ).toThrow(/owner_email is immutable/);
+  });
+
+  it("preserves display casing while rejecting case-only path duplicates", async () => {
+    database = new DatabaseSync(":memory:");
+    await applySitesMigrations(d1(database));
+
+    database
+      .prepare(
+        `INSERT INTO documents (
+           id, slug, title, markdown, updated_by, virtual_path, owner_email
+         ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        "first",
+        "first",
+        "Plan",
+        "# Plan",
+        "owner@example.test",
+        "Briefs/Plan.md",
+        "owner@example.test",
+      );
+
+    expect(
+      database
+        .prepare("SELECT virtual_path FROM documents WHERE id = 'first'")
+        .get(),
+    ).toEqual({ virtual_path: "Briefs/Plan.md" });
+    expect(() =>
+      database
+        ?.prepare(
+          `INSERT INTO documents (
+             id, slug, title, markdown, updated_by, virtual_path, owner_email
+           ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "second",
+          "second",
+          "Plan copy",
+          "# Plan copy",
+          "owner@example.test",
+          "briefs/plan.md",
+          "owner@example.test",
+        ),
+    ).toThrow(/UNIQUE constraint failed: documents\.virtual_path/);
+  });
+
+  it("moves pre-existing case-only collisions aside before adding the NOCASE index", async () => {
+    async function migrateFixture() {
+      const fixture = new DatabaseSync(":memory:");
+      try {
+        fixture.exec(`CREATE TABLE schema_migrations (
+          id TEXT PRIMARY KEY NOT NULL,
+          applied_at TEXT NOT NULL
+        )`);
+        for (const migration of sitesMigrations.slice(0, 3)) {
+          for (const statement of migration.statements) fixture.exec(statement);
+          fixture
+            .prepare(
+              "INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)",
+            )
+            .run(migration.id, "2026-07-25T00:00:00.000Z");
+        }
+        const insert = fixture.prepare(
+          `INSERT INTO documents (
+             id, slug, title, markdown, updated_by, virtual_path, owner_email
+           ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        );
+        for (const row of [
+          ["first-document", "Briefs/Plan.md"],
+          ["second-document", "briefs/plan.md"],
+          ["first-notes", "Notes/Readme.markdown"],
+          ["second-notes", "notes/readme.MARKDOWN"],
+        ] as const) {
+          insert.run(
+            row[0],
+            row[0],
+            "Document",
+            "# Document",
+            "owner@example.test",
+            row[1],
+            "owner@example.test",
+          );
+        }
+
+        await applySitesMigrations(d1(fixture));
+        return fixture
+          .prepare("SELECT id, virtual_path FROM documents ORDER BY id")
+          .all() as Array<{ id: string; virtual_path: string }>;
+      } finally {
+        fixture.close();
+      }
+    }
+
+    const expected = [
+      { id: "first-document", virtual_path: "Briefs/Plan.md" },
+      { id: "first-notes", virtual_path: "Notes/Readme.markdown" },
+      {
+        id: "second-document",
+        virtual_path: "path-conflicts/second_document.md",
+      },
+      {
+        id: "second-notes",
+        virtual_path: "path-conflicts/second_notes.markdown",
+      },
+    ];
+    expect(await migrateFixture()).toEqual(expected);
+    expect(await migrateFixture()).toEqual(expected);
   });
 });

@@ -5,7 +5,7 @@ import {
   publicHostedViewer,
   requireDocumentAccess,
   requireSameOriginMutation,
-  saveCanonicalDocument,
+  saveHostedDocument,
 } from "../../../lib/hosted-documents";
 
 export const dynamic = "force-dynamic";
@@ -27,7 +27,7 @@ export async function GET(request: Request) {
 export async function PUT(request: Request) {
   try {
     requireSameOriginMutation(request);
-    const { viewer } = await requireDocumentAccess(request, "write");
+    const { viewer, document } = await requireDocumentAccess(request, "write");
     const body = (await request.json()) as {
       content?: unknown;
       expectedVersion?: unknown;
@@ -55,7 +55,8 @@ export async function PUT(request: Request) {
             body.confirmedReplace === true
           ? "confirmed-replace"
           : "edit";
-    const result = await saveCanonicalDocument({
+    const result = await saveHostedDocument({
+      documentId: document.id,
       content: body.content,
       expectedVersion: body.expectedVersion,
       viewer,

@@ -21,20 +21,21 @@ describe("HostedBackend", () => {
   });
 
   it("loads the shared document and viewer", async () => {
-    global.fetch = vi.fn(async () =>
+    const fetchMock = vi.fn(async () =>
       Response.json({
         document: documentDto(),
         viewer: {
           displayName: "Reviewer",
         },
       }),
-    ) as unknown as typeof fetch;
+    );
+    global.fetch = fetchMock as unknown as typeof fetch;
 
     const backend = new HostedBackend();
     const loaded = await backend.load();
 
     expect(loaded.document.version).toBe("d1:1");
-    expect(loaded.document.title).toBe("Roughdraft shared document");
+    expect(loaded.document.title).toBe("roughdraft-SKILL.md");
     expect(loaded.viewer.displayName).toBe("Reviewer");
     expect(loaded.viewer).not.toHaveProperty("email");
     expect(backend.info).toMatchObject({
@@ -42,10 +43,15 @@ describe("HostedBackend", () => {
       canonical: "hosted-record",
       localFileSync: false,
     });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/document?document=roughdraft-skill",
+      { cache: "no-store" },
+    );
   });
 
   it("saves with an optimistic expected version", async () => {
-    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      expect(url).toBe("/api/document?document=second-document");
       expect(JSON.parse(String(init?.body))).toMatchObject({
         content: "# Updated\n",
         expectedVersion: "d1:1",
@@ -54,7 +60,7 @@ describe("HostedBackend", () => {
     });
     global.fetch = fetchMock as unknown as typeof fetch;
 
-    const backend = new HostedBackend();
+    const backend = new HostedBackend("second-document");
     const saved = await backend.saveMarkdownFile(
       "roughdraft-SKILL.md",
       "# Updated\n",
@@ -114,16 +120,67 @@ describe("HostedBackend", () => {
 
     expect(result).toEqual({ delivered: true });
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/review-events",
+      "/api/review-events?document=roughdraft-skill",
       expect.objectContaining({ method: "POST" }),
     );
   });
 
-  it("maps hosted assets to private API URLs", () => {
-    const backend = new HostedBackend();
+  it("maps hosted assets to document-scoped private API URLs", () => {
+    const backend = new HostedBackend("second-document");
     expect(backend.resolveFileUrl("./.roughdraft-assets/asset-image.png")).toBe(
-      "/api/assets?path=.%2F.roughdraft-assets%2Fasset-image.png",
+      "/api/assets?document=second-document&path=.%2F.roughdraft-assets%2Fasset-image.png",
     );
     expect(backend.resolveFileUrl("https://example.com/image.png")).toBeNull();
+  });
+
+  it("lists and creates hosted documents through explicit collection APIs", async () => {
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/documents" && init?.method === "POST") {
+        expect(JSON.parse(String(init.body))).toEqual({
+          path: "briefs/new.md",
+          content: "# New\n",
+          operation: "create",
+        });
+        return Response.json(
+          {
+            document: {
+              ...documentDto(),
+              id: "new-document",
+              path: "briefs/new.md",
+            },
+          },
+          { status: 201 },
+        );
+      }
+      return Response.json({
+        documents: [
+          {
+            id: "roughdraft-skill",
+            path: "roughdraft-SKILL.md",
+            versionNumber: 1,
+            reviewState: "in_review",
+            createdAt: "2026-07-23T00:00:00.000Z",
+            updatedAt: "2026-07-23T00:00:00.000Z",
+            sizeBytes: 10,
+          },
+        ],
+        viewer: { displayName: "Reviewer" },
+      });
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const listed = await HostedBackend.list();
+    const created = await HostedBackend.create({
+      path: "briefs/new.md",
+      content: "# New\n",
+      operation: "create",
+    });
+
+    expect(listed.documents).toHaveLength(1);
+    expect(created).toMatchObject({
+      id: "new-document",
+      path: "briefs/new.md",
+      title: "new.md",
+    });
   });
 });

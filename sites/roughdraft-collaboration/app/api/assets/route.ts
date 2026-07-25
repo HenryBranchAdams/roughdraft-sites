@@ -13,7 +13,7 @@ const MAX_ASSET_BYTES = 10 * 1024 * 1024;
 
 export async function GET(request: Request) {
   try {
-    await requireDocumentAccess(request, "read");
+    const { document } = await requireDocumentAccess(request, "read");
     const path = new URL(request.url).searchParams.get("path")?.trim();
     if (!path) {
       return Response.json(
@@ -22,7 +22,7 @@ export async function GET(request: Request) {
       );
     }
 
-    const record = await findAsset(path);
+    const record = await findAsset(document.id, path);
     if (!record) {
       return Response.json({ error: "Asset not found." }, { status: 404 });
     }
@@ -52,7 +52,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     requireSameOriginMutation(request);
-    const { viewer } = await requireDocumentAccess(request, "write");
+    const { viewer, document } = await requireDocumentAccess(request, "write");
     if (!env.FILES) {
       throw new Error("Cloudflare R2 binding `FILES` is unavailable.");
     }
@@ -72,7 +72,7 @@ export async function POST(request: Request) {
     const id = crypto.randomUUID();
     const filename = sanitizeFilename(file.name);
     const markdownPath = `./.roughdraft-assets/${id.slice(0, 8)}-${filename}`;
-    const objectKey = `roughdraft-skill/${id}/${filename}`;
+    const objectKey = `${document.id}/${id}/${filename}`;
     const mimeType = file.type || "application/octet-stream";
 
     await env.FILES.put(objectKey, file.stream(), {
@@ -81,6 +81,7 @@ export async function POST(request: Request) {
 
     try {
       await recordAsset({
+        documentId: document.id,
         id,
         markdownPath,
         objectKey,
@@ -97,7 +98,9 @@ export async function POST(request: Request) {
     return Response.json(
       {
         markdownPath,
-        previewUrl: `/api/assets?path=${encodeURIComponent(markdownPath)}`,
+        previewUrl: `/api/assets?document=${encodeURIComponent(
+          document.id,
+        )}&path=${encodeURIComponent(markdownPath)}`,
         mimeType,
       },
       { status: 201 },

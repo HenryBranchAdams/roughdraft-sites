@@ -4,7 +4,7 @@ import {
   publicHostedDocument,
   requireDocumentAccess,
   requireSameOriginMutation,
-  restoreCanonicalVersion,
+  restoreHostedVersion,
 } from "../../../../lib/hosted-documents";
 
 export const dynamic = "force-dynamic";
@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 export async function POST(request: Request) {
   try {
     requireSameOriginMutation(request);
-    const { viewer } = await requireDocumentAccess(request, "write");
+    const { viewer, document } = await requireDocumentAccess(request, "write");
     const body = (await request.json()) as {
       version?: unknown;
       expectedVersion?: unknown;
@@ -31,7 +31,8 @@ export async function POST(request: Request) {
       );
     }
 
-    const result = await restoreCanonicalVersion({
+    const result = await restoreHostedVersion({
+      documentId: document.id,
       version: Number(body.version),
       expectedVersion: body.expectedVersion,
       viewer,

@@ -6,19 +6,30 @@
 > affiliated with or endorsed by Lex, and it is not Henry Adams's original
 > brand. Roughdraft remains Copyright (c) Nathan Baschez and MIT licensed.
 
-The Sites-hosted document is canonical in this mode. Cloudflare D1 stores the current Markdown,
-version history, review events, and attachment metadata; R2 stores attachment
-bytes. The editor retains Roughdraft's rich-text and Markdown modes, comments,
-replies, suggestions, review rail, RFM/CriticMarkup serialization, and exact
-Markdown import/export.
+Each Sites-hosted document is canonical in this mode. Cloudflare D1 stores the
+current Markdown, immutable owner identity, safe virtual path, version history,
+review events, and attachment metadata; R2 stores attachment bytes. The editor
+retains Roughdraft's rich-text and Markdown modes, comments, replies,
+suggestions, review rail, RFM/CriticMarkup serialization, and exact Markdown
+import/export.
 
-Import explicitly creates a new hosted version. Export explicitly downloads
-the current Roughdraft Flavored Markdown. Neither action silently updates a
-Markdown file on a Mac.
+The document navigator is a Markdown-only adaptation of Extend UI's
+`@extend/file-system`: a flat hosted manifest with derived folders, Finder-style
+icon/list/column/gallery views, keyboard navigation, search, sorting, and a
+compact responsive view selector. It does not install heavy PDF or Office
+viewers. See [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
+
+New and import are explicit same-origin operations that create a stable,
+opaque document id independently of its validated virtual path. Export
+explicitly downloads the selected document's current Roughdraft Flavored
+Markdown. Neither action silently updates a Markdown file on a Mac. Rename and
+delete are intentionally outside this workspace.
 
 Site admission is enforced by OpenAI Sites. The application additionally
 enforces each document's stored `access_scope` (`site-members`, `restricted`,
 or `owner-only`) on every document, history, review, export, and asset route.
+Every route resolves the authorized document before passing its stable id into
+storage queries; client-supplied identity is ignored.
 This source does not assert a particular live access mode and does not change
 site access controls.
 
@@ -47,10 +58,12 @@ With the development server running, `node tests/local-smoke.mjs` exercises the
 live local D1/R2 workflow: canonical load/export, optimistic save, stale-write
 rejection, review completion, history, and attachment round-tripping.
 
-Runtime D1 upgrades are ordered in `db/migrations.ts`. They preserve the
-existing v1 document/history rows and are idempotent after their migration id
-is recorded. Keep `db/schema.ts` aligned with those migrations. A production
-build copies Sites metadata and migrations into `dist/.openai/`.
+Runtime D1 upgrades are ordered in `db/migrations.ts`. Schema v3 adds a unique
+virtual Markdown path and immutable `owner_email`, backfills the historical
+`roughdraft-skill` record to `roughdraft-SKILL.md`, preserves existing
+Markdown/history, and remains a no-op after its migration id is recorded. The
+root route and APIs without a `document` parameter still open that original
+canonical record. Keep `db/schema.ts` aligned with the migrations.
 
 ## Hosted boundary
 

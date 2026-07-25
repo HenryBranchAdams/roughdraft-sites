@@ -51,7 +51,7 @@ describe("hosted public data", () => {
       path: "roughdraft-SKILL.md",
       mode: "sites-hosted",
       canonical: "hosted-record",
-      schemaVersion: 2,
+      schemaVersion: 3,
       accessScope: "site-members",
       capabilities: {
         sharedPersistence: true,

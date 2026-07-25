@@ -1,6 +1,6 @@
 import { hostedErrorResponse } from "../../../lib/api-response";
 import {
-  completeCanonicalReview,
+  completeHostedReview,
   HostedDocumentError,
   publicHostedDocument,
   requireDocumentAccess,
@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 export async function POST(request: Request) {
   try {
     requireSameOriginMutation(request);
-    const { viewer } = await requireDocumentAccess(request, "write");
+    const { viewer, document } = await requireDocumentAccess(request, "write");
     const body = (await request.json()) as {
       expectedVersion?: unknown;
       overallComment?: unknown;
@@ -24,7 +24,8 @@ export async function POST(request: Request) {
         "expected_version_required",
       );
     }
-    const result = await completeCanonicalReview({
+    const result = await completeHostedReview({
+      documentId: document.id,
       expectedVersion: body.expectedVersion,
       overallComment:
         typeof body.overallComment === "string"

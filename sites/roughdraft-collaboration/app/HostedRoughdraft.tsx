@@ -4,22 +4,48 @@ import {
   Activity,
   Cloud,
   Download,
+  FilePlus2,
   FileUp,
   History,
   Loader2,
+  PanelLeftClose,
+  PanelLeftOpen,
   RotateCcw,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  type FormEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { DocumentEditorViewMode } from "./roughdraft-ui/app-navigation";
 import { DocumentWorkspace } from "./roughdraft-ui/DocumentWorkspace";
 import {
   HostedBackend,
+  type HostedDocumentListItem,
   type HostedPage,
   type HostedViewer,
 } from "./roughdraft-ui/hosted-backend";
+import {
+  MarkdownFileSystem,
+  type MarkdownFileSystemProps,
+} from "./roughdraft-ui/MarkdownFileSystem";
 import { chooseHostedExternalUpdateAction } from "./roughdraft-ui/hosted-sync-policy";
 import type { DocumentSaveState } from "./roughdraft-ui/PageCard";
+import { Button } from "./roughdraft-ui/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "./roughdraft-ui/components/ui/dialog";
+import { Input } from "./roughdraft-ui/components/ui/input";
+import { gateHostedDocumentTransition } from "./roughdraft-ui/hosted-dialog-policy";
 import {
   type CompleteReviewOptions,
   MarkdownFileConflictError,
@@ -43,16 +69,47 @@ type ActivityPayload = {
   }>;
 };
 
-const DOCUMENT_PATH = "roughdraft-SKILL.md";
+type DocumentTransitionAction =
+  | { kind: "switch"; documentId: string }
+  | { kind: "create"; path: string }
+  | { kind: "import"; path: string; file: File };
+
+type PathDialogState =
+  | { kind: "create"; path: string }
+  | { kind: "import"; path: string; file: File };
+
+type ConfirmationDialogState =
+  | { kind: "discard"; action: DocumentTransitionAction }
+  | { kind: "replace" }
+  | { kind: "restore"; version: number; path: string };
+
+const CANONICAL_DOCUMENT_ID = "roughdraft-skill";
+const DOCUMENT_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
+function initialDocumentId(): string {
+  if (typeof window === "undefined") return CANONICAL_DOCUMENT_ID;
+  const value = new URL(window.location.href).searchParams.get("document");
+  return value && DOCUMENT_ID_PATTERN.test(value)
+    ? value
+    : CANONICAL_DOCUMENT_ID;
+}
+
+function documentUrl(path: string, documentId: string): string {
+  const params = new URLSearchParams({ document: documentId });
+  return `${path}?${params.toString()}`;
+}
 
 export default function HostedRoughdraft() {
-  const [backend] = useState(() => new HostedBackend());
+  const [activeDocumentId, setActiveDocumentId] = useState(initialDocumentId);
+  const backend = useMemo(
+    () => new HostedBackend(activeDocumentId),
+    [activeDocumentId],
+  );
+  const [documents, setDocuments] = useState<HostedDocumentListItem[]>([]);
   const [documentPage, setDocumentPage] = useState<HostedPage | null>(null);
   const [viewer, setViewer] = useState<HostedViewer | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [saveState, setSaveState] = useState<DocumentSaveState>("saved");
-  const [documentDirty, setDocumentDirty] = useState(false);
   const [conflictState, setConflictState] = useState<ConflictState>("clean");
   const [forceResetKey, setForceResetKey] = useState<string | null>(null);
   const [editorViewMode, setEditorViewMode] =
@@ -60,44 +117,58 @@ export default function HostedRoughdraft() {
   const [activityOpen, setActivityOpen] = useState(false);
   const [activity, setActivity] = useState<ActivityPayload | null>(null);
   const [activityLoading, setActivityLoading] = useState(false);
-  const [importStatus, setImportStatus] = useState<string | null>(null);
+  const [navigatorOpen, setNavigatorOpen] = useState(true);
+  const [operationStatus, setOperationStatus] = useState<string | null>(null);
   const [restoreStatus, setRestoreStatus] = useState<string | null>(null);
+  const [pathDialog, setPathDialog] = useState<PathDialogState | null>(null);
+  const [confirmationDialog, setConfirmationDialog] =
+    useState<ConfirmationDialogState | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const pageRef = useRef<HostedPage | null>(null);
   const draftRef = useRef<string | null>(null);
   const dirtyRef = useRef(false);
   const saveStateRef = useRef<DocumentSaveState>("saved");
+  const loadSequenceRef = useRef(0);
 
   const applyDocument = useCallback((next: HostedPage) => {
     pageRef.current = next;
     draftRef.current = next.content;
     dirtyRef.current = false;
-    setDocumentDirty(false);
+    saveStateRef.current = "saved";
     setDocumentPage(next);
     setConflictState("clean");
   }, []);
 
-  const loadDocument = useCallback(async () => {
-    setLoading(true);
-    setLoadError(null);
-    try {
-      const payload = await backend.load();
-      setViewer(payload.viewer);
-      applyDocument(payload.document);
-    } catch (error) {
-      setLoadError(
-        error instanceof Error
-          ? error.message
-          : "Could not load the hosted document.",
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, [applyDocument, backend]);
+  const refreshDocuments = useCallback(async () => {
+    const payload = await HostedBackend.list();
+    setDocuments(payload.documents);
+    setViewer(payload.viewer);
+    return payload.documents;
+  }, []);
 
   useEffect(() => {
-    void Promise.resolve().then(loadDocument);
-  }, [loadDocument]);
+    const sequence = ++loadSequenceRef.current;
+    // Loading is an external API synchronization keyed by the selected
+    // document; stale completions are discarded with the sequence guard.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void Promise.all([backend.load(), refreshDocuments()])
+      .then(([payload]) => {
+        if (sequence !== loadSequenceRef.current) return;
+        setViewer(payload.viewer);
+        applyDocument(payload.document);
+      })
+      .catch((error: unknown) => {
+        if (sequence !== loadSequenceRef.current) return;
+        setLoadError(
+          error instanceof Error
+            ? error.message
+            : "Could not load the hosted document.",
+        );
+      })
+      .finally(() => {
+        if (sequence === loadSequenceRef.current) setLoading(false);
+      });
+  }, [applyDocument, backend, refreshDocuments]);
 
   const saveDocument = useCallback(
     async (_id: string, content: string) => {
@@ -105,11 +176,12 @@ export default function HostedRoughdraft() {
       if (!current) return;
       try {
         const saved = await backend.saveMarkdownFile(
-          DOCUMENT_PATH,
+          current.path,
           content,
           current.version,
         );
         applyDocument(saved);
+        void refreshDocuments();
       } catch (error) {
         if (error instanceof MarkdownFileConflictError) {
           setConflictState("conflict");
@@ -117,62 +189,58 @@ export default function HostedRoughdraft() {
         throw error;
       }
     },
-    [applyDocument, backend],
+    [applyDocument, backend, refreshDocuments],
   );
 
   const reloadLatest = useCallback(async () => {
-    const latest = await backend.getMarkdownFile(DOCUMENT_PATH);
-    applyDocument(latest);
-    setForceResetKey(`${latest.version}:reload`);
-  }, [applyDocument, backend]);
-
-  const overwriteShared = useCallback(async () => {
     const current = pageRef.current;
     if (!current) return;
-    if (
-      !window.confirm(
-        "Replace the latest hosted record with your paused draft? The replaced version will remain in history.",
-      )
-    ) {
-      return;
-    }
+    const latest = await backend.getMarkdownFile(current.path);
+    applyDocument(latest);
+    setForceResetKey(`${activeDocumentId}:${latest.version}:reload`);
+    void refreshDocuments();
+  }, [activeDocumentId, applyDocument, backend, refreshDocuments]);
+
+  const replaceHostedRecord = useCallback(async () => {
+    const current = pageRef.current;
+    if (!current) return;
     const saved = await backend.confirmedReplaceMarkdown(
       draftRef.current ?? current.content,
       current.version,
     );
     applyDocument(saved);
-    saveStateRef.current = "saved";
-    setSaveState("saved");
-    setForceResetKey(`${saved.version}:overwrite`);
-  }, [applyDocument, backend]);
+    setForceResetKey(`${activeDocumentId}:${saved.version}:overwrite`);
+    void refreshDocuments();
+  }, [activeDocumentId, applyDocument, backend, refreshDocuments]);
 
   const completeReview = useCallback(
     async (options?: CompleteReviewOptions) => {
       const current = pageRef.current;
       if (!current) return { delivered: false };
-
       const draft = draftRef.current ?? current.content;
       const saved =
         draft === current.content
           ? current
           : await backend.saveMarkdownFile(
-              DOCUMENT_PATH,
+              current.path,
               draft,
               current.version,
             );
       if (saved !== current) applyDocument(saved);
-      const result = await backend.completeReview(DOCUMENT_PATH, options);
-      const reviewed = await backend.getMarkdownFile(DOCUMENT_PATH);
+      const result = await backend.completeReview(current.path, options);
+      const reviewed = await backend.getMarkdownFile(current.path);
       applyDocument(reviewed);
-      setForceResetKey(`${reviewed.version}:reviewed`);
+      setForceResetKey(`${activeDocumentId}:${reviewed.version}:reviewed`);
+      void refreshDocuments();
       return result;
     },
-    [applyDocument, backend],
+    [activeDocumentId, applyDocument, backend, refreshDocuments],
   );
 
   useEffect(() => {
-    if (!documentPage) return;
-    return backend.watchMarkdownFile(DOCUMENT_PATH, (event) => {
+    const current = documentPage;
+    if (!current) return;
+    return backend.watchMarkdownFile(current.path, (event) => {
       if (!event.version || event.version === pageRef.current?.version) return;
       if (
         chooseHostedExternalUpdateAction({
@@ -187,41 +255,123 @@ export default function HostedRoughdraft() {
     });
   }, [backend, documentPage, reloadLatest]);
 
-  const importMarkdown = useCallback(
-    async (file: File) => {
-      const current = pageRef.current;
-      if (!current) return;
-      setImportStatus("Importing…");
+  const switchDocument = useCallback(
+    (documentId: string) => {
+      if (documentId === activeDocumentId) return;
+      const destination =
+        documentId === CANONICAL_DOCUMENT_ID
+          ? window.location.pathname
+          : `${window.location.pathname}?document=${encodeURIComponent(
+              documentId,
+            )}`;
+      window.history.replaceState({}, "", destination);
+      setLoading(true);
+      setLoadError(null);
+      setDocumentPage(null);
+      pageRef.current = null;
+      draftRef.current = null;
+      dirtyRef.current = false;
+      saveStateRef.current = "saved";
+      setConflictState("clean");
+      setActivity(null);
+      setActivityOpen(false);
+      setActiveDocumentId(documentId);
+    },
+    [activeDocumentId],
+  );
+
+  const executeDocumentTransition = useCallback(
+    async (action: DocumentTransitionAction) => {
+      if (action.kind === "switch") {
+        switchDocument(action.documentId);
+        return;
+      }
+
+      const isImport = action.kind === "import";
+      setOperationStatus(
+        isImport
+          ? "Importing as a new hosted document…"
+          : "Creating hosted document…",
+      );
       try {
-        const content = await file.text();
-        const imported = await backend.importMarkdown(content, current.version);
-        applyDocument(imported);
-        setForceResetKey(`${imported.version}:import`);
-        setImportStatus(`Imported ${file.name}`);
+        const filename = action.path.split("/").at(-1) ?? "Untitled";
+        const heading =
+          filename.replace(/\.(?:md|markdown)$/i, "") || "Untitled";
+        const created = await HostedBackend.create({
+          path: action.path,
+          content: isImport ? await action.file.text() : `# ${heading}\n`,
+          operation: isImport ? "import" : "create",
+        });
+        switchDocument(created.id);
+        void refreshDocuments();
+        setOperationStatus(
+          isImport
+            ? `Imported ${created.path}. Hosted record is canonical.`
+            : `Created ${created.path}`,
+        );
       } catch (error) {
-        if (error instanceof MarkdownFileConflictError) {
-          setConflictState("conflict");
-        }
-        setImportStatus(
-          error instanceof Error ? error.message : "Import failed.",
+        setOperationStatus(
+          error instanceof Error
+            ? error.message
+            : isImport
+              ? "Import failed."
+              : "Document creation failed.",
         );
       } finally {
-        window.setTimeout(() => setImportStatus(null), 3_000);
+        window.setTimeout(() => setOperationStatus(null), 3_000);
       }
     },
-    [applyDocument, backend],
+    [refreshDocuments, switchDocument],
+  );
+
+  const requestDocumentTransition = useCallback(
+    (action: DocumentTransitionAction) => {
+      if (action.kind === "switch" && action.documentId === activeDocumentId) {
+        return;
+      }
+      const decision = gateHostedDocumentTransition({
+        action,
+        isDirty: dirtyRef.current,
+        saveState: saveStateRef.current,
+      });
+      if (decision.kind === "confirm-discard") {
+        setConfirmationDialog({ kind: "discard", action: decision.action });
+        return;
+      }
+      void executeDocumentTransition(decision.action);
+    },
+    [activeDocumentId, executeDocumentTransition],
+  );
+
+  const submitPathDialog = useCallback(
+    (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      if (!pathDialog) return;
+      const path = pathDialog.path.trim();
+      if (!path) return;
+      const action: DocumentTransitionAction =
+        pathDialog.kind === "import"
+          ? { kind: "import", path, file: pathDialog.file }
+          : { kind: "create", path };
+      setPathDialog(null);
+      requestDocumentTransition(action);
+    },
+    [pathDialog, requestDocumentTransition],
   );
 
   const loadActivity = useCallback(async () => {
     setActivityLoading(true);
     try {
-      const response = await fetch("/api/history", { cache: "no-store" });
+      const response = await fetch(
+        documentUrl("/api/history", activeDocumentId),
+        { cache: "no-store" },
+      );
       if (!response.ok) throw new Error("Could not load activity.");
       setActivity((await response.json()) as ActivityPayload);
     } finally {
       setActivityLoading(false);
     }
-  }, []);
+  }, [activeDocumentId]);
 
   useEffect(() => {
     if (activityOpen) void Promise.resolve().then(loadActivity);
@@ -231,24 +381,19 @@ export default function HostedRoughdraft() {
     async (version: number) => {
       const current = pageRef.current;
       if (!current) return;
-      if (
-        !window.confirm(
-          `Restore version ${version} as a new shared version? Your current version will remain in history.`,
-        )
-      ) {
-        return;
-      }
-
       setRestoreStatus(`Restoring version ${version}…`);
       try {
-        const response = await fetch("/api/history/restore", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            version,
-            expectedVersion: current.version,
-          }),
-        });
+        const response = await fetch(
+          documentUrl("/api/history/restore", activeDocumentId),
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              version,
+              expectedVersion: current.version,
+            }),
+          },
+        );
         const payload = (await response.json()) as {
           document?: HostedPage;
           current?: HostedPage;
@@ -262,8 +407,10 @@ export default function HostedRoughdraft() {
           throw new Error(payload.error || "Restore failed.");
         }
         applyDocument(payload.document);
-        setForceResetKey(`${payload.document.version}:restore`);
-        await loadActivity();
+        setForceResetKey(
+          `${activeDocumentId}:${payload.document.version}:restore`,
+        );
+        await Promise.all([loadActivity(), refreshDocuments()]);
         setRestoreStatus(`Version ${version} restored`);
       } catch (error) {
         setRestoreStatus(
@@ -273,14 +420,49 @@ export default function HostedRoughdraft() {
         window.setTimeout(() => setRestoreStatus(null), 3_000);
       }
     },
-    [applyDocument, loadActivity],
+    [activeDocumentId, applyDocument, loadActivity, refreshDocuments],
   );
 
-  if (loading) {
+  const confirmDialogAction = useCallback(() => {
+    const pending = confirmationDialog;
+    if (!pending) return;
+    setConfirmationDialog(null);
+    if (pending.kind === "discard") {
+      void executeDocumentTransition(pending.action);
+      return;
+    }
+    if (pending.kind === "replace") {
+      void replaceHostedRecord();
+      return;
+    }
+    void restoreVersion(pending.version);
+  }, [
+    confirmationDialog,
+    executeDocumentTransition,
+    replaceHostedRecord,
+    restoreVersion,
+  ]);
+
+  const manifestItems = useMemo<MarkdownFileSystemProps["items"]>(
+    () =>
+      documents.map((document) => ({
+        kind: "file",
+        id: document.id,
+        path: document.path,
+        size: document.sizeBytes,
+        createdAt: document.createdAt,
+        updatedAt: document.updatedAt,
+        versionNumber: document.versionNumber,
+        reviewState: document.reviewState,
+      })),
+    [documents],
+  );
+
+  if (loading && !documentPage) {
     return (
       <main className="hosted-loading">
         <Loader2 aria-hidden="true" />
-        <p>Opening the shared Roughdraft workspace…</p>
+        <p>Opening the hosted Markdown workspace…</p>
       </main>
     );
   }
@@ -289,9 +471,9 @@ export default function HostedRoughdraft() {
     return (
       <main className="hosted-error">
         <p className="hosted-kicker">Roughdraft collaboration</p>
-        <h1>We couldn’t open the shared document.</h1>
+        <h1>We couldn’t open the hosted document.</h1>
         <p>{loadError ?? "The hosted document is unavailable."}</p>
-        <button type="button" onClick={() => void loadDocument()}>
+        <button type="button" onClick={() => window.location.reload()}>
           Try again
         </button>
       </main>
@@ -299,7 +481,7 @@ export default function HostedRoughdraft() {
   }
 
   return (
-    <main className="hosted-shell">
+    <main className="hosted-shell" data-testid="hosted-shell">
       <header className="hosted-bar">
         <div className="hosted-brand">
           <span className="hosted-brand-mark" aria-hidden="true">
@@ -321,6 +503,27 @@ export default function HostedRoughdraft() {
         </div>
 
         <div className="hosted-actions">
+          <button
+            type="button"
+            aria-label={navigatorOpen ? "Hide documents" : "Show documents"}
+            onClick={() => setNavigatorOpen((open) => !open)}
+          >
+            {navigatorOpen ? (
+              <PanelLeftClose aria-hidden="true" />
+            ) : (
+              <PanelLeftOpen aria-hidden="true" />
+            )}
+            Files
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              setPathDialog({ kind: "create", path: "drafts/untitled.md" })
+            }
+          >
+            <FilePlus2 aria-hidden="true" />
+            New
+          </button>
           <input
             ref={fileInputRef}
             className="sr-only"
@@ -329,18 +532,19 @@ export default function HostedRoughdraft() {
             onChange={(event) => {
               const file = event.currentTarget.files?.[0];
               event.currentTarget.value = "";
-              if (file) void importMarkdown(file);
+              if (file) {
+                setPathDialog({ kind: "import", path: file.name, file });
+              }
             }}
           />
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={documentDirty || saveState !== "saved"}
-          >
+          <button type="button" onClick={() => fileInputRef.current?.click()}>
             <FileUp aria-hidden="true" />
-            Import
+            Import new
           </button>
-          <a href="/api/document/export">
+          <a
+            href={documentUrl("/api/document/export", activeDocumentId)}
+            download
+          >
             <Download aria-hidden="true" />
             Export
           </a>
@@ -355,7 +559,7 @@ export default function HostedRoughdraft() {
         </div>
       </header>
 
-      <p className="hosted-attribution">
+      <p className="hosted-attribution" data-testid="hosted-attribution">
         Community fork · based on{" "}
         <a
           href="https://github.com/Lex-Inc/roughdraft"
@@ -368,39 +572,55 @@ export default function HostedRoughdraft() {
         update a local Mac file.
       </p>
 
-      <section className="hosted-editor" aria-label="Shared document editor">
-        <DocumentWorkspace
-          documentPage={documentPage}
-          activeDocumentPath={DOCUMENT_PATH}
-          documentCopyPath={DOCUMENT_PATH}
-          documentFilenameLabel={DOCUMENT_PATH}
-          documentEditorViewMode={editorViewMode}
-          onDocumentEditorViewModeChange={setEditorViewMode}
-          onSaveDocument={saveDocument}
-          onDocumentSaveStateChange={(next) => {
-            saveStateRef.current = next;
-            setSaveState(next);
-          }}
-          onDocumentDirtyStateChange={(dirty) => {
-            dirtyRef.current = dirty;
-            setDocumentDirty(dirty);
-          }}
-          onDocumentLocalContentChange={(markdown) => {
-            draftRef.current = markdown;
-          }}
-          documentDiskChangeState={conflictState}
-          documentForceResetKey={forceResetKey}
-          onReloadDocumentFromDisk={reloadLatest}
-          onKeepEditingWithoutAutosave={() => setConflictState("paused")}
-          onOverwriteDocumentOnDisk={overwriteShared}
-          onCompleteReview={completeReview}
-          backend={backend}
-        />
-      </section>
+      <div className="hosted-workspace">
+        {navigatorOpen ? (
+          <MarkdownFileSystem
+            items={manifestItems}
+            selectedDocumentId={activeDocumentId}
+            onFileOpen={(file) =>
+              requestDocumentTransition({
+                kind: "switch",
+                documentId: file.id,
+              })
+            }
+          />
+        ) : null}
+        <section className="hosted-editor" aria-label="Hosted document editor">
+          <DocumentWorkspace
+            documentPage={documentPage}
+            activeDocumentPath={documentPage.path}
+            documentCopyPath={documentPage.path}
+            documentFilenameLabel={
+              documentPage.path.split("/").at(-1) ?? "document.md"
+            }
+            documentEditorViewMode={editorViewMode}
+            onDocumentEditorViewModeChange={setEditorViewMode}
+            onSaveDocument={saveDocument}
+            onDocumentSaveStateChange={(next) => {
+              saveStateRef.current = next;
+            }}
+            onDocumentDirtyStateChange={(dirty) => {
+              dirtyRef.current = dirty;
+            }}
+            onDocumentLocalContentChange={(markdown) => {
+              draftRef.current = markdown;
+            }}
+            documentDiskChangeState={conflictState}
+            documentForceResetKey={forceResetKey}
+            onReloadDocumentFromDisk={reloadLatest}
+            onKeepEditingWithoutAutosave={() => setConflictState("paused")}
+            onOverwriteDocumentOnDisk={() =>
+              setConfirmationDialog({ kind: "replace" })
+            }
+            onCompleteReview={completeReview}
+            backend={backend}
+          />
+        </section>
+      </div>
 
-      {importStatus ? (
+      {operationStatus ? (
         <p className="hosted-toast" role="status">
-          {importStatus}
+          {operationStatus}
         </p>
       ) : null}
 
@@ -415,7 +635,7 @@ export default function HostedRoughdraft() {
           <aside className="activity-panel" aria-label="Collaboration activity">
             <div className="activity-heading">
               <div>
-                <p>Shared workspace</p>
+                <p>{documentPage.path}</p>
                 <h2>Activity</h2>
               </div>
               <button
@@ -427,9 +647,8 @@ export default function HostedRoughdraft() {
               </button>
             </div>
             <p className="activity-note">
-              Every import, edit, restore, and completed review remains
-              attributable. Restores create a new version; they never erase
-              history.
+              Activity is scoped to this hosted document. Restores create a new
+              version and never erase prior history.
             </p>
 
             {activityLoading ? (
@@ -483,7 +702,11 @@ export default function HostedRoughdraft() {
                               <button
                                 type="button"
                                 onClick={() =>
-                                  void restoreVersion(version.version)
+                                  setConfirmationDialog({
+                                    kind: "restore",
+                                    version: version.version,
+                                    path: documentPage.path,
+                                  })
                                 }
                               >
                                 <RotateCcw aria-hidden="true" />
@@ -514,14 +737,152 @@ export default function HostedRoughdraft() {
             ) : null}
             <footer>
               Hosted edits do not synchronize to a Mac-local file. Export
-              Markdown for a manual handoff until the optional local bridge is
-              added.
+              Markdown for an explicit handoff.
             </footer>
           </aside>
         </>
       ) : null}
+
+      <Dialog
+        open={pathDialog !== null}
+        onOpenChange={(open) => {
+          if (!open) setPathDialog(null);
+        }}
+      >
+        <DialogContent data-testid="hosted-path-dialog">
+          <form className="grid gap-4" onSubmit={submitPathDialog}>
+            <DialogHeader>
+              <DialogTitle>
+                {pathDialog?.kind === "import"
+                  ? "Import as a new document"
+                  : "Create a hosted document"}
+              </DialogTitle>
+              <DialogDescription>
+                Choose a relative Markdown path. Folders are derived from the
+                path and no Mac-local file will be changed.
+              </DialogDescription>
+            </DialogHeader>
+            <label
+              className="grid gap-1.5 text-sm font-medium text-stone-800"
+              htmlFor="hosted-virtual-path"
+            >
+              Virtual Markdown path
+              <Input
+                id="hosted-virtual-path"
+                data-testid="hosted-path-input"
+                autoFocus
+                required
+                spellCheck={false}
+                value={pathDialog?.path ?? ""}
+                onChange={(event) =>
+                  setPathDialog((current) =>
+                    current
+                      ? { ...current, path: event.target.value }
+                      : current,
+                  )
+                }
+              />
+            </label>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                className="h-9 px-3 text-sm"
+                onClick={() => setPathDialog(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                className="h-9 px-3 text-sm"
+                data-testid="hosted-path-submit"
+              >
+                {pathDialog?.kind === "import" ? "Continue import" : "Continue"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={confirmationDialog !== null}
+        onOpenChange={(open) => {
+          if (!open) setConfirmationDialog(null);
+        }}
+      >
+        <DialogContent data-testid="hosted-confirmation-dialog">
+          <DialogHeader>
+            <DialogTitle>
+              {confirmationDialog
+                ? confirmationDialogCopy(confirmationDialog).title
+                : "Confirm action"}
+            </DialogTitle>
+            <DialogDescription>
+              {confirmationDialog
+                ? confirmationDialogCopy(confirmationDialog).description
+                : "Review this action before continuing."}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-9 px-3 text-sm"
+              onClick={() => setConfirmationDialog(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              className="h-9 px-3 text-sm"
+              data-testid="hosted-confirmation-submit"
+              onClick={confirmDialogAction}
+            >
+              {confirmationDialog
+                ? confirmationDialogCopy(confirmationDialog).actionLabel
+                : "Continue"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </main>
   );
+}
+
+function confirmationDialogCopy(state: ConfirmationDialogState): {
+  title: string;
+  description: string;
+  actionLabel: string;
+} {
+  if (state.kind === "replace") {
+    return {
+      title: "Replace the hosted record?",
+      description:
+        "Your paused draft will replace the latest hosted record. The replaced version will remain in this document’s history.",
+      actionLabel: "Replace hosted record",
+    };
+  }
+  if (state.kind === "restore") {
+    return {
+      title: `Restore version ${state.version}?`,
+      description: `Version ${state.version} will become a new version of ${state.path}. Current history will be retained.`,
+      actionLabel: "Restore version",
+    };
+  }
+
+  const target = state.action;
+  const targetLabel =
+    target.kind === "switch"
+      ? "Switch document"
+      : target.kind === "import"
+        ? "Import and switch"
+        : "Create and switch";
+  return {
+    title: "Discard the browser draft?",
+    description:
+      "Continuing will discard the unsaved draft in this browser. The current hosted record will not be changed.",
+    actionLabel: targetLabel,
+  };
 }
 
 function formatTimestamp(value: string): string {

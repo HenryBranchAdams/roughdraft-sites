@@ -170,10 +170,327 @@ body {
   display: flex;
   min-height: 0;
   flex: 1;
+  min-width: 0;
 }
 
 .hosted-editor > div {
+  width: 100%;
   padding-top: 1.85rem;
+}
+
+.hosted-workspace {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+}
+
+.markdown-finder {
+  display: flex;
+  width: clamp(17rem, 24vw, 22rem);
+  min-width: 17rem;
+  flex-direction: column;
+  border-right: 1px solid #ded9d0;
+  background: #fff;
+  color: #292524;
+}
+
+.markdown-finder-toolbar {
+  display: grid;
+  gap: 0.55rem;
+  border-bottom: 1px solid #e7e2da;
+  padding: 0.7rem;
+}
+
+.markdown-finder-title-row,
+.markdown-finder-controls,
+.markdown-finder-search,
+.markdown-finder-view-tabs {
+  display: flex;
+  align-items: center;
+}
+
+.markdown-finder-title-row {
+  gap: 0.38rem;
+  min-width: 0;
+}
+
+.markdown-finder-title-row strong {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  color: #292524;
+  font-size: 0.76rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.markdown-finder-title-row > span {
+  color: #a8a29e;
+  font-size: 0.66rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.markdown-finder-controls {
+  justify-content: space-between;
+  gap: 0.45rem;
+}
+
+.markdown-finder-view-tabs {
+  gap: 0.12rem;
+  border: 1px solid #ded9d0;
+  border-radius: 0.45rem;
+  padding: 0.12rem;
+}
+
+.markdown-finder-view-select {
+  display: none;
+}
+
+.markdown-finder-sort,
+.markdown-finder-view-select {
+  height: 1.75rem;
+  min-width: 0;
+  border: 1px solid #ded9d0;
+  border-radius: 0.42rem;
+  background: #fff;
+  padding: 0 1.45rem 0 0.45rem;
+  color: #57534e;
+  font: inherit;
+  font-size: 0.68rem;
+}
+
+.markdown-finder-search {
+  position: relative;
+}
+
+.markdown-finder-search > svg {
+  position: absolute;
+  left: 0.5rem;
+  z-index: 1;
+  width: 0.75rem;
+  height: 0.75rem;
+  color: #a8a29e;
+}
+
+.markdown-finder-search input {
+  padding-left: 1.65rem;
+}
+
+.markdown-finder-viewport {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  outline: none;
+}
+
+.markdown-finder-viewport:focus-visible {
+  box-shadow: inset 0 0 0 2px #a8a29e;
+}
+
+.markdown-finder-entry-collection {
+  display: grid;
+  align-content: start;
+  padding: 0.38rem;
+}
+
+.markdown-finder-list .markdown-finder-entry-collection {
+  gap: 0.08rem;
+}
+
+.markdown-finder-icons .markdown-finder-entry-collection {
+  grid-template-columns: repeat(auto-fill, minmax(5.4rem, 1fr));
+  gap: 0.42rem;
+  padding: 0.7rem;
+}
+
+.markdown-finder-entry {
+  min-width: 0;
+  border: 0;
+  border-radius: 0.42rem;
+  background: transparent;
+  color: #44403c;
+  font: inherit;
+  text-align: left;
+}
+
+.markdown-finder-list .markdown-finder-entry {
+  display: grid;
+  min-height: 2rem;
+  grid-template-columns: 1rem minmax(0, 1fr) 5rem 3.2rem;
+  align-items: center;
+  gap: 0.42rem;
+  padding: 0.32rem 0.45rem;
+  font-size: 0.7rem;
+}
+
+.markdown-finder-icons .markdown-finder-entry {
+  display: flex;
+  min-height: 5.8rem;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.38rem;
+  padding: 0.55rem;
+  font-size: 0.68rem;
+  text-align: center;
+}
+
+.markdown-finder-entry:hover,
+.markdown-finder-entry[aria-selected="true"],
+.markdown-finder-column button:hover,
+.markdown-finder-column button[aria-pressed="true"],
+.markdown-finder-filmstrip button:hover,
+.markdown-finder-filmstrip button[aria-pressed="true"] {
+  background: #e8f2ff;
+  color: #164e86;
+}
+
+.markdown-finder-entry > svg {
+  width: 1rem;
+  height: 1rem;
+}
+
+.markdown-finder-entry[data-kind="folder"] > svg {
+  color: #2589d8;
+  fill: #7cc8fb;
+}
+
+.markdown-finder-icons .markdown-finder-entry > svg {
+  width: 2.4rem;
+  height: 2.4rem;
+}
+
+.markdown-finder-entry > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.markdown-finder-entry > small {
+  overflow: hidden;
+  color: #a8a29e;
+  font-size: 0.62rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.markdown-finder-columns-layout {
+  display: grid;
+  min-height: 100%;
+  grid-template-columns: minmax(8rem, 1fr) minmax(9rem, 1fr);
+}
+
+.markdown-finder-column {
+  border-right: 1px solid #e7e2da;
+  padding: 0.35rem;
+}
+
+.markdown-finder-column button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 0.4rem;
+  border: 0;
+  border-radius: 0.35rem;
+  background: transparent;
+  padding: 0.38rem 0.45rem;
+  color: #57534e;
+  font: inherit;
+  font-size: 0.68rem;
+  text-align: left;
+}
+
+.markdown-finder-column button svg {
+  width: 0.85rem;
+  height: 0.85rem;
+}
+
+.markdown-finder-preview,
+.markdown-finder-gallery-stage {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem;
+  padding: 1rem;
+  color: #78716c;
+  text-align: center;
+}
+
+.markdown-finder-preview > svg,
+.markdown-finder-gallery-stage > svg {
+  width: 3.2rem;
+  height: 3.2rem;
+  color: #9ca3af;
+}
+
+.markdown-finder-preview strong,
+.markdown-finder-gallery-stage strong {
+  max-width: 100%;
+  overflow: hidden;
+  color: #292524;
+  font-size: 0.76rem;
+  text-overflow: ellipsis;
+}
+
+.markdown-finder-preview span,
+.markdown-finder-gallery-stage span {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 0.64rem;
+  text-overflow: ellipsis;
+}
+
+.markdown-finder-gallery-layout {
+  display: grid;
+  min-height: 100%;
+  grid-template-rows: minmax(12rem, 1fr) auto;
+}
+
+.markdown-finder-filmstrip {
+  display: flex;
+  gap: 0.35rem;
+  overflow-x: auto;
+  border-top: 1px solid #e7e2da;
+  padding: 0.45rem;
+}
+
+.markdown-finder-filmstrip button {
+  display: flex;
+  width: 4.8rem;
+  min-width: 4.8rem;
+  min-height: 4.2rem;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.28rem;
+  border: 0;
+  border-radius: 0.4rem;
+  background: transparent;
+  color: #57534e;
+  font: inherit;
+  font-size: 0.58rem;
+}
+
+.markdown-finder-filmstrip svg {
+  width: 1.4rem;
+  height: 1.4rem;
+}
+
+.markdown-finder-filmstrip span {
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.markdown-finder-empty {
+  margin: 0;
+  padding: 2rem 1rem;
+  color: #a8a29e;
+  font-size: 0.72rem;
+  text-align: center;
 }
 
 .hosted-shell [data-testid="document-save-status-corner"] {
@@ -510,6 +827,10 @@ body {
     padding-right: 1rem;
     padding-left: 1rem;
   }
+
+  .markdown-finder {
+    width: 17rem;
+  }
 }
 
 @media (max-width: 520px) {
@@ -528,8 +849,36 @@ body {
 
   .hosted-actions button,
   .hosted-actions a {
-    flex: 1;
+    flex: 0 1 auto;
     justify-content: center;
+    font-size: 0;
+  }
+
+  .hosted-actions svg {
+    width: 1rem;
+    height: 1rem;
+  }
+
+  .hosted-workspace {
+    position: relative;
+  }
+
+  .markdown-finder {
+    position: absolute;
+    inset: 0 auto 0 0;
+    z-index: 70;
+    width: min(92vw, 21rem);
+    box-shadow: 12px 0 30px rgba(41, 37, 36, 0.16);
+  }
+}
+
+@media (max-width: 479px) {
+  .markdown-finder-view-tabs {
+    display: none;
+  }
+
+  .markdown-finder-view-select {
+    display: block;
   }
 }
 

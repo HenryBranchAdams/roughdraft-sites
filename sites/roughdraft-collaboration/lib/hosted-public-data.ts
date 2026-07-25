@@ -30,6 +30,16 @@ export type HostedDocumentPublicDto = {
   };
 };
 
+export type HostedDocumentListItemPublicDto = {
+  id: string;
+  path: string;
+  versionNumber: number;
+  reviewState: string;
+  createdAt: string;
+  updatedAt: string;
+  sizeBytes: number;
+};
+
 type HostedViewerPublicSource = {
   displayName: string;
 };

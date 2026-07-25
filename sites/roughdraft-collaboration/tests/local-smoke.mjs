@@ -38,6 +38,46 @@ assert.equal(
   JSON.stringify(initial.body).replaceAll(auditEmail, ""),
 );
 
+const manifest = await json("/api/documents");
+assert.equal(manifest.response.status, 200);
+assert.ok(
+  manifest.body.documents.some(
+    (document) => document.id === initial.body.document.id,
+  ),
+);
+
+const importedPath = `smoke/${crypto.randomUUID()}.md`;
+const created = await json("/api/documents", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    path: importedPath,
+    content: "# Isolated hosted document\n",
+    operation: "import",
+  }),
+});
+assert.equal(created.response.status, 201);
+assert.notEqual(created.body.document.id, initial.body.document.id);
+assert.equal(created.body.document.path, importedPath);
+
+const scopedDocument = encodeURIComponent(created.body.document.id);
+const scopedSaved = await json(`/api/document?document=${scopedDocument}`, {
+  method: "PUT",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    content: "# Isolated hosted document\n\nScoped edit.\n",
+    expectedVersion: created.body.document.version,
+    changeKind: "edit",
+  }),
+});
+assert.equal(scopedSaved.response.status, 200);
+const canonicalAfterScopedSave = await json("/api/document");
+assert.equal(
+  canonicalAfterScopedSave.body.document.version,
+  initial.body.document.version,
+  "saving one document must not mutate the default canonical document",
+);
+
 const exported = await fetch(
   `${origin}/api/document/export`,
   withAuth({ headers: { Accept: "text/markdown" } }),
@@ -49,19 +89,19 @@ assert.equal(
   "export must reflect the hosted canonical document",
 );
 
-const marker = `\n<!-- hosted smoke ${crypto.randomUUID()} -->`;
+const marker = `\n\nHosted smoke ${crypto.randomUUID()}.\n`;
 const saved = await json("/api/document", {
   method: "PUT",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({
-    content: marker + initial.body.document.content,
+    content: initial.body.document.content + marker,
     expectedVersion: initial.body.document.version,
     changeKind: "edit",
   }),
 });
-assert.equal(saved.response.status, 200);
+assert.equal(saved.response.status, 200, JSON.stringify(saved.body));
 assert.notEqual(saved.body.document.version, initial.body.document.version);
-assert.ok(saved.body.document.content.startsWith(marker));
+assert.ok(saved.body.document.content.endsWith(marker));
 
 const stale = await json("/api/document", {
   method: "PUT",
@@ -157,5 +197,6 @@ console.log(
     versions: activity.body.versions.length,
     reviews: activity.body.reviews.length,
     assetPath: uploaded.body.markdownPath,
+    isolatedDocument: created.body.document.id,
   }),
 );
