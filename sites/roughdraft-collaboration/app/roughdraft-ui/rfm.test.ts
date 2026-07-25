@@ -14,6 +14,24 @@ function codes(markdown: string): string[] {
 }
 
 describe("validateRoughdraftMarkdown", () => {
+  it("does not mistake YAML frontmatter for final review endmatter", () => {
+    const markdown = [
+      "---",
+      "name: example",
+      "---",
+      "",
+      "# Draft",
+      "",
+      "The document may mention `{#c1}` as an inline example.",
+      "",
+    ].join("\n");
+
+    expect(validateRoughdraftMarkdown(markdown)).toMatchObject({
+      ok: true,
+      errors: [],
+    });
+  });
+
   it("accepts valid comments, anchored comments, and suggestions", () => {
     const result = validateRoughdraftMarkdown(
       [

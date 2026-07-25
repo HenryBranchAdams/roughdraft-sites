@@ -1172,6 +1172,10 @@ function findFinalYamlEndmatter(
   const matches = [...markdown.matchAll(/\n---[ \t]*\r?\n/g)];
   const last = matches.at(-1);
   if (!last || last.index === undefined) return null;
+  if (/^---[ \t]*\r?\n/.test(markdown)) {
+    const frontmatterClose = matches[0];
+    if (frontmatterClose?.index === last.index) return null;
+  }
 
   const raw = markdown.slice(last.index);
   return {
