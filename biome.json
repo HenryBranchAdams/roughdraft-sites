@@ -4,11 +4,13 @@
     "includes": [
       "**",
       "!.context",
+      "!.agents/prose",
       "!.roughdraft-state",
       "!**/coverage",
       "!**/playwright-report",
       "!**/test-results",
       "!**/node_modules",
+      "!sites/roughdraft-collaboration/.wrangler",
       "!**/dist"
     ]
   },

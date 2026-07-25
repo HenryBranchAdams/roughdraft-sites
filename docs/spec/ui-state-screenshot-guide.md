@@ -145,6 +145,19 @@ suggestions:
 | Code mode | Review rail absent | Open fenced fixture with `?editor=code` | `page-card-code`, `markdown-code-editor` | Confirms fenced CriticMarkup alone does not create review rail. |
 | Error/home fallback | Non-Markdown path | Open URL with `?path=/tmp/file.txt` | homepage error message | Copy: `Roughdraft now opens one .md file at a time.` |
 | Error/home fallback | Missing/unloadable path | Open URL with invalid markdown path through local backend | homepage error message | Captures load-error homepage variant. |
+| Sites-hosted | Canonical workspace | Open the fork-owned Sites app with an admitted synthetic test viewer | `hosted-shell`, `hosted-attribution` | Capture “Sites-hosted collaboration,” “Hosted record is canonical,” community-fork/upstream/MIT attribution, and the no-local-sync reminder. |
+| Sites-hosted | Multi-document navigator | Open the hosted workspace with Markdown documents in nested virtual paths | `markdown-finder`, `hosted-shell` | Capture icon, list, columns, and gallery views; verify search/sort, selected file, and compact view selector below 480px. |
+| Sites-hosted | New document path dialog | Choose New | `hosted-path-dialog`, `hosted-path-input`, `hosted-path-submit` | Capture the default relative path, focus treatment, Cancel, and Continue actions. |
+| Sites-hosted | Import path dialog | Choose Import new and select a Markdown file | `hosted-path-dialog`, `hosted-path-input`, `hosted-path-submit` | The selected filename is the default virtual path; canceling must not create a hosted record. |
+| Sites-hosted | Dirty document switch | Edit one hosted document, then open another from the navigator | `hosted-confirmation-dialog`, `hosted-confirmation-submit`, `markdown-finder` | Cancel keeps the current draft and polling scope; confirm discards only the browser draft and starts polling the selected document. |
+| Sites-hosted | Create/import | Complete the New and Import new path dialogs with a valid relative `.md` or `.markdown` virtual path | `hosted-toast`, `markdown-finder` | Both create a new hosted record with a stable id. Capture invalid path and case-insensitive duplicate path errors; no local path should appear in the URL. |
+| Sites-hosted | Separate-context update | Context A commits a D1 version while clean context B polls | `file-conflict-notice` | Use two independent browser contexts, not two pages sharing one context. |
+| Sites-hosted | Stale conflict | Contexts A and B edit version N; save A, then save B | `file-conflict-notice`, `file-conflict-action-reload`, `file-conflict-action-overwrite` | No N+2 should exist until the reviewer chooses a recovery action. |
+| Sites-hosted | Confirmed replace | Choose overwrite after a stale conflict | `hosted-confirmation-dialog`, `hosted-confirmation-submit` | Copy must say the replaced version remains in history. |
+| Sites-hosted | Restore confirmation | Choose Restore for a prior version in Activity | `hosted-confirmation-dialog`, `hosted-confirmation-submit` | Copy must name the version and say current history will be retained. |
+| Sites-hosted | Invalid RFM import | Import malformed review syntax | `hosted-toast` | The mutation remains rejected with structured RFM diagnostics. |
+| Sites-hosted | Access errors | Exercise missing identity, unauthorized identity, and unknown document | `hosted-error` | Capture 401, 403, and 404 variants without personal data. |
+| Sites-hosted | Collaboration activity | Open Activity after import, restore, confirmed replace, and completed review | `activity-panel` | Show attributable immutable history and the no-local-sync footer. |
 ## Playwright Capture Skeleton
 ```ts
 import { chromium, devices } from "playwright";
